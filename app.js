@@ -1,29 +1,62 @@
-const { Client, Intents } = require('discord.js');
+const fs = require('fs');
 const dotenv = require('dotenv');
+const { Client, Intents, Collection } = require('discord.js');
+const { Routes } = require('discord-api-types/v9');
+const { REST } = require('@discordjs/rest');
+
 dotenv.config();
 
 const client = new Client({ intents: [Intents.FLAGS.GUILDS] });
+const commandFiles = fs.readdirSync('./src/commands').filter(file => file.endsWith('.js'));
+const commands = [];
+client.commands = new Collection();
+
+for (const commandFile of commandFiles) {
+	const command = require(`./src/commands/${ commandFile }`);
+	commands.push(command.data.toJSON());
+	client.commands.set(command.data.name, command);
+}
+
+client.once('ready', async () => {
+	console.log('Dries: Loading commands into bot...');
+
+	const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_BOT_TOKEN);
+
+	try {
+		if (process.env.ENV === 'production') {
+			await rest.put(Routes.applicationCommands(process.env.DISCORD_CLIENT_ID), {
+				body: commands,
+			});
+			console.log('Dries: Successfully registered commands globally');
+		}
+		else {
+			await rest.put(Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, process.env.DISCORD_SERVER_ID), {
+				body: commands,
+			});
+			console.log('Dries: Successfully registered commands locally');
+		}
+	}
+	catch (error) {
+		if (error) console.error('Dries: ', error);
+	}
+	console.log('Dries:', `Connected as ${ client.user.tag }`);
+});
 
 client.on('interactionCreate', async interaction => {
 	if (!interaction.isCommand()) return;
 
-	const { commandName } = interaction;
+	const command = client.commands.get(interaction.commandName);
 
-	switch (commandName) {
-	case 'qr':
-		await interaction.reply('QR code generating....');
-		break;
-	case 'whomai':
-		await interaction.reply('I\'m Unikoo\'s personal QR Code Generator!');
-		break;
-	case 'info':
-		await interaction.reply(`I was made by Dries Verelst and my purpose is generating QR codes. 
-		The server I'm on: ${interaction.guild.name} with a total of ${interaction.guild.memberCount} members.`);
-		break;
-	default:
-		await interaction.reply(`Sorry to stop the show.. ${commandName} is something I don't know`);
-		break;
+	if (!command) return;
+
+	try {
+		await command.execute(interaction);
 	}
+	catch (error) {
+		console.error('Dries: error=', error);
+		await interaction.reply({ content: 'There was an error while executing this command', ephemeral: true });
+	}
+
 });
-client.login(process.env.DISCORD_BOT_TOKEN).then(r => console.log('Dries: The bot is up and running'));
+client.login(process.env.DISCORD_BOT_TOKEN);
 
